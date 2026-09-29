@@ -92,9 +92,9 @@ app.post(
           .all({
             userEmail: userEmail,
           });
-        if (!userGroup) {
+        if (!userGroup?.length) {
           return Promise.reject(
-            new ExpectedError("sign-up token is invalid or used", 400),
+            new ExpectedError("user is not registered", 403),
           );
         }
         return res.json(userGroup);
