@@ -5,6 +5,7 @@ RUN apk add --no-cache python3 make gcc g++
 COPY package.json .
 COPY tsconfig.json .
 COPY src/ ./src/
+COPY config/ ./config/
 
 RUN npm install
 RUN npm run build
@@ -14,5 +15,6 @@ WORKDIR /usr/src/wedding-website
 RUN mkdir db
 COPY --from=builder /workspace/node_modules ./node_modules
 COPY --from=builder /workspace/dist ./dist
+COPY --from=builder /workspace/config ./config
 
 CMD ["node", "dist/index.js"]

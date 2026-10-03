@@ -1,0 +1,14 @@
+{
+    "auth": {
+        "clientId": "563861986647-ip051o498ukjamleqg3tflv8v4vnkf5a.apps.googleusercontent.com"
+    },
+    "db": {
+        "sqliteFilePath": "db/app.db"
+    },
+    "server": {
+        "port": 3000,
+        "corsUrls": [
+            "http://localhost:4200"
+        ]
+    }
+}
