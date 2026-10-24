@@ -1,0 +1,4 @@
+dist/
+db/
+scripts/
+package-lock.json

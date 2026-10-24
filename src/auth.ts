@@ -16,25 +16,41 @@ export const googleAuth = (clientId: string) => {
   return (req: Request, res: Response, next: NextFunction) => {
     const authHeader: string | undefined = req.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
-      return next(new ExpectedError("no credentials present", 401));
+      next(new ExpectedError("no credentials present", 401));
+      return;
     }
 
+    // Fetched separately so a Google outage is a 503 rather than a 401 that sends the user round the
+    // login loop; the client caches the certs, so this rarely hits the network.
     googleClient
-      .verifyIdToken({
-        idToken: authHeader.slice("Bearer ".length),
-        audience: clientId,
-      })
-      .then(
-        (ticket) => ticket.getPayload(),
-        // expired, malformed or forged tokens: a 401 lets the FE know to log in again
-        (error: unknown) =>
-          Promise.reject(new ExpectedError("invalid token", 401, { cause: error })),
+      .getFederatedSignonCertsAsync()
+      .catch((error: unknown) =>
+        Promise.reject(
+          new ExpectedError(
+            "couldn't reach Google to verify the login, please try again",
+            503,
+            {
+              cause: error,
+            },
+          ),
+        ),
       )
+      .then(() =>
+        googleClient
+          .verifyIdToken({
+            idToken: authHeader.slice("Bearer ".length),
+            audience: clientId,
+          })
+          .catch((error: unknown) =>
+            Promise.reject(
+              new ExpectedError("invalid token", 401, { cause: error }),
+            ),
+          ),
+      )
+      .then((ticket) => ticket.getPayload())
       .then((tokenPayload) => {
         if (!tokenPayload?.email || !tokenPayload.email_verified) {
-          return Promise.reject(
-            new ExpectedError("invalid token: no verified email", 401),
-          );
+          throw new ExpectedError("invalid token: no verified email", 401);
         }
         const identity: Identity = {
           sub: tokenPayload.sub,

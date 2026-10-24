@@ -20,12 +20,14 @@ describe("guest store", () => {
     db.pragma("foreign_keys = ON");
     migrate(db);
     db.exec(`
-      INSERT INTO groups (group_id, name) VALUES (1, 'The Smiths'), (2, 'The Joneses');
-      INSERT INTO guests (guest_id, group_id, name, surname, plus_one_of, sign_up_uuid) VALUES
-        (1, 1, 'Alice', 'Smith', NULL, 'invite-alice'),
-        (2, 1, 'Bob', 'Smith', NULL, 'invite-bob'),
-        (3, 1, NULL, NULL, 1, NULL),
-        (4, 2, 'Carol', 'Jones', NULL, 'invite-carol');
+      INSERT INTO guests (guest_id, group_id, name, surname, sign_up_uuid) VALUES
+        (1, 1, 'Alice', 'Smith', 'invite-alice'),
+        (2, 1, 'Bob', 'Smith', 'invite-bob'),
+        (3, 2, 'Carol', 'Jones', 'invite-carol');
+      INSERT INTO guest_roles (guest_id, role) VALUES
+        (2, 'venue_accommodation'),
+        (3, 'viewer'),
+        (3, 'admin');
     `);
     store = createGuestStore(db);
   });
@@ -60,41 +62,48 @@ describe("guest store", () => {
     );
   });
 
-  test("the group only contains the caller's own group, plus-ones after their guest", () => {
+  test("the group only contains the caller's own group", () => {
     signUpAlice();
-    const group = store.getGroup("sub-alice");
-
-    assert.equal(group?.selfId, 1);
-    assert.equal(group?.groupName, "The Smiths");
-    assert.deepEqual(
-      group?.guests.map(({ guestId, name, plusOneOf, rsvp }) => ({ guestId, name, plusOneOf, rsvp })),
-      [
-        { guestId: 1, name: "Alice", plusOneOf: null, rsvp: null },
-        { guestId: 3, name: null, plusOneOf: 1, rsvp: null },
-        { guestId: 2, name: "Bob", plusOneOf: null, rsvp: null },
+    assert.deepEqual(store.getGroup("sub-alice"), {
+      selfId: 1,
+      roles: [],
+      guests: [
+        { guestId: 1, name: "Alice", surname: "Smith", rsvp: null },
+        { guestId: 2, name: "Bob", surname: "Smith", rsvp: null },
       ],
-    );
+    });
   });
 
-  test("RSVPs come back with real booleans", () => {
+  test("only the caller's own roles come back with the group", () => {
+    store.signUp({
+      signupUuid: "invite-carol",
+      sub: "sub-carol",
+      email: "carol@example.com",
+      tokenName: null,
+    });
+    assert.deepEqual(store.getGroup("sub-carol")?.roles, ["admin", "viewer"]);
+  });
+
+  test("RSVPs come back with real booleans and accommodation as coordinates", () => {
     signUpAlice();
     db.exec(`
-      INSERT INTO rsvps (guest_id, attending, dietary, shuttle, accommodation, plus_one_name, responded_by, responded_at)
-      VALUES (3, 1, 'vegetarian', 0, NULL, 'Dave', 1, '2026-10-24T10:00:00.000Z');
+      INSERT INTO rsvps (guest_id, attending, dietary, shuttle, accommodation_lat, accommodation_lng, responded_by, responded_at) VALUES
+        (1, 1, 'vegetarian', 0, -33.9249, 18.4241, 1, '2026-10-24T10:00:00.000Z'),
+        (2, 0, NULL, NULL, NULL, NULL, 1, '2026-10-24T10:00:00.000Z');
     `);
 
-    const plusOne = store.getGroup("sub-alice")?.guests.find((guest) => guest.guestId === 3);
+    const [alice, bob] = store.getGroup("sub-alice")?.guests ?? [];
 
-    assert.deepEqual(plusOne?.rsvp, {
+    assert.deepEqual(alice?.rsvp, {
       attending: true,
       dietary: "vegetarian",
       dietaryOtherDetails: null,
       shuttle: false,
-      accommodation: null,
-      plusOneName: "Dave",
-      plusOneSurname: null,
+      accommodation: { lat: -33.9249, lng: 18.4241 },
       respondedBy: 1,
       respondedAt: "2026-10-24T10:00:00.000Z",
     });
+    assert.equal(bob?.rsvp?.attending, false);
+    assert.equal(bob?.rsvp?.accommodation, null);
   });
 });

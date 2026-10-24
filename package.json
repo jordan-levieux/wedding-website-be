@@ -5,18 +5,22 @@
   "license": "ISC",
   "author": "",
   "type": "module",
-  "main": "index.js",
   "scripts": {
-    "build": "tsc",
-    "dev": "node ./dist/index.js",
-    "test": "tsc && node --test \"dist/**/*.test.js\""
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "dev": "npm run build && npm start",
+    "test": "tsc && node --test \"dist/**/*.test.js\"",
+    "lint": "oxlint src && tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.0",
-    "ts-node": "^10.9.2",
+    "oxlint": "1.89.0",
+    "prettier": "3.9.10",
     "typescript": "^7.0.2"
   },
   "dependencies": {

@@ -1,0 +1,18 @@
+{
+  "db": {
+    "sqliteFilePath": "SQLITE_FILE_PATH"
+  },
+  "rsvp": {
+    "deadline": "RSVP_DEADLINE"
+  },
+  "server": {
+    "port": {
+      "__name": "PORT",
+      "__format": "json"
+    },
+    "corsUrls": {
+      "__name": "CORS_URLS",
+      "__format": "json"
+    }
+  }
+}

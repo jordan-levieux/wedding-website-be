@@ -6,19 +6,29 @@ import express, {
   type RequestHandler,
   type Response,
 } from "express";
+import { createAdminRouter } from "./admin-routes.js";
+import type { AdminStore } from "./admin-store.js";
 import { getIdentity } from "./auth.js";
 import { errorHandler, ExpectedError } from "./error-handler.js";
-import type { GuestStore } from "./guest-store.js";
+import type { Group, GuestStore } from "./guest-store.js";
+import { parseRsvpBatch } from "./validation.js";
 
 export const createApp = (deps: {
   db: Database.Database;
   store: GuestStore;
+  adminStore: AdminStore;
   authenticate: RequestHandler;
   corsUrls: string[] | undefined;
+  rsvpDeadline: Date;
 }): Express => {
-  const { db, store, authenticate, corsUrls } = deps;
+  const { db, store, adminStore, authenticate, corsUrls, rsvpDeadline } = deps;
   const app: Express = express();
   const dbHealthCheck = db.prepare("SELECT 1");
+
+  const groupResponse = (group: Group) => ({
+    ...group,
+    rsvpDeadline: rsvpDeadline.toISOString(),
+  });
 
   if (corsUrls) {
     console.log("cors URLs: ", corsUrls);
@@ -46,8 +56,32 @@ export const createApp = (deps: {
     if (!group) {
       throw new ExpectedError("user is not registered", 403);
     }
-    res.json(group);
+    res.json(groupResponse(group));
   });
+
+  app.get("/group", authenticate, (_req: Request, res: Response) => {
+    const group = store.getGroup(getIdentity(res).sub);
+    if (!group) {
+      throw new ExpectedError("user is not registered", 403);
+    }
+    res.json(groupResponse(group));
+  });
+
+  app.put(
+    "/rsvp",
+    authenticate,
+    express.json(),
+    (req: Request, res: Response) => {
+      const sub = getIdentity(res).sub;
+      if (Date.now() > rsvpDeadline.getTime()) {
+        throw new ExpectedError("the RSVP deadline has passed", 403);
+      }
+      store.submitRsvps(sub, parseRsvpBatch(req.body));
+      res.json(groupResponse(store.getGroup(sub)!));
+    },
+  );
+
+  app.use("/admin", createAdminRouter({ store, adminStore, authenticate }));
 
   app.get("/health", (_: Request, res: Response) => {
     dbHealthCheck.get();
