@@ -16,5 +16,6 @@ RUN mkdir db
 COPY --from=builder /workspace/node_modules ./node_modules
 COPY --from=builder /workspace/dist ./dist
 COPY --from=builder /workspace/config ./config
+COPY migrations/ ./migrations/
 
 CMD ["node", "dist/index.js"]

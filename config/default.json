@@ -8,7 +8,8 @@
     "server": {
         "port": 3000,
         "corsUrls": [
-            "http://localhost:4200"
+            "http://localhost:4200",
+            "https://storage.googleapis.com"
         ]
     }
 }
