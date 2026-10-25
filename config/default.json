@@ -10,6 +10,6 @@
   },
   "server": {
     "port": 3000,
-    "corsUrls": ["http://localhost:4200", "https://storage.googleapis.com", "https://hj-wedding-day.co.za"]
+    "corsUrls": ["http://localhost:4200", "https://hj-wedding-day.co.za"]
   }
 }
