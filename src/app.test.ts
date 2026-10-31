@@ -328,6 +328,46 @@ describe("API", () => {
       assert.equal(adminHistory.details[0].signUpUuid, "invite-alice");
     });
 
+    test("RSVP history comes back in the same shape as an RSVP", async () => {
+      await call("PUT", "/rsvp", "bob", { rsvps: [attending(2)] });
+      await call("PUT", "/rsvp", "alice", {
+        rsvps: [
+          {
+            ...attending(2),
+            shuttle: null,
+            accommodation: { lat: -33.9, lng: 22.6 },
+          },
+        ],
+      });
+      const { body } = await call("GET", "/admin/guests/2/history", "carol");
+      assert.deepEqual(
+        body.rsvps.map(({ respondedAt, ...entry }: { respondedAt: string }) => {
+          assert.match(respondedAt, /^\d{4}-\d\d-\d\dT/);
+          return entry;
+        }),
+        [
+          {
+            historyId: 1,
+            attending: true,
+            dietary: "none",
+            dietaryOtherDetails: null,
+            shuttle: false,
+            accommodation: null,
+            respondedBy: 2,
+          },
+          {
+            historyId: 2,
+            attending: true,
+            dietary: "none",
+            dietaryOtherDetails: null,
+            shuttle: null,
+            accommodation: { lat: -33.9, lng: 22.6 },
+            respondedBy: 1,
+          },
+        ],
+      );
+    });
+
     test("an unknown guest's history is a 404", async () => {
       assert.equal(
         (await call("GET", "/admin/guests/99/history", "alice")).status,

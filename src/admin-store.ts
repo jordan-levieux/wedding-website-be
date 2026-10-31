@@ -49,6 +49,36 @@ export type RsvpChange = {
   historyId: number;
 };
 
+export type GuestHistoryEntry = {
+  historyId: number;
+  groupId: number;
+  name: string;
+  surname: string;
+  signUpUuid: string | null;
+  email: string | null;
+  tokenName: string | null;
+  signedUpAt: string | null;
+  updatedBy: number | null;
+  recordedAt: string;
+};
+
+export type RoleHistoryEntry = {
+  role: Role;
+  grantedBy: number | null;
+  grantedAt: string;
+  revokedBy: number | null;
+  revokedAt: string | null;
+};
+
+// respondedAt is when this version of the answer was recorded
+export type RsvpHistoryEntry = Rsvp & { historyId: number };
+
+export type GuestHistory = {
+  details: GuestHistoryEntry[];
+  roles: RoleHistoryEntry[];
+  rsvps: RsvpHistoryEntry[];
+};
+
 type AdminGuestRow = RsvpRow &
   Omit<AdminGuest, "roles" | "rsvp"> & {
     roles: string;
@@ -148,7 +178,7 @@ export const createAdminStore = (db: Database.Database) => {
   );
   const rsvpHistoryStatement = db.prepare<
     { guestId: number },
-    Record<string, unknown>
+    RsvpRow & { historyId: number }
   >(
     `
       SELECT
@@ -160,7 +190,7 @@ export const createAdminStore = (db: Database.Database) => {
         accommodation_lat AS accommodationLat,
         accommodation_lng AS accommodationLng,
         responded_by AS respondedBy,
-        recorded_at AS recordedAt
+        recorded_at AS respondedAt
       FROM rsvp_history
       WHERE guest_id = $guestId
       ORDER BY history_id;
@@ -168,7 +198,7 @@ export const createAdminStore = (db: Database.Database) => {
   );
   const guestHistoryStatement = db.prepare<
     { guestId: number },
-    Record<string, unknown>
+    GuestHistoryEntry
   >(
     `
       SELECT
@@ -189,7 +219,7 @@ export const createAdminStore = (db: Database.Database) => {
   );
   const roleHistoryStatement = db.prepare<
     { guestId: number },
-    Record<string, unknown>
+    RoleHistoryEntry
   >(
     `
       SELECT
@@ -390,14 +420,19 @@ export const createAdminStore = (db: Database.Database) => {
         nowAttending: toBoolean(row.nowAttending)!,
       })),
 
-    getGuestHistory: (guestId: number, includeInvites: boolean) => {
+    getGuestHistory: (
+      guestId: number,
+      includeInvites: boolean,
+    ): GuestHistory => {
       getGuest(guestId);
       return {
         details: guestHistoryStatement
           .all({ guestId })
           .map((row) => (includeInvites ? row : { ...row, signUpUuid: null })),
         roles: roleHistoryStatement.all({ guestId }),
-        rsvps: rsvpHistoryStatement.all({ guestId }),
+        rsvps: rsvpHistoryStatement
+          .all({ guestId })
+          .map(({ historyId, ...row }) => ({ historyId, ...toRsvp(row)! })),
       };
     },
 
