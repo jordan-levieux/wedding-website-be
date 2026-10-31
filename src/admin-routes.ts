@@ -11,6 +11,8 @@ import { ExpectedError } from "./error-handler.js";
 import type { GuestStore } from "./guest-store.js";
 import type { Role } from "./model.js";
 import {
+  parseAccommodation,
+  parseGroupId,
   parseGuestId,
   parseGuestUpdate,
   parseNewGuest,
@@ -66,6 +68,42 @@ export const createAdminRouter = (deps: {
   router.get("/rsvp-changes", canView, (_req: Request, res: Response) => {
     res.json(adminStore.listRsvpChanges());
   });
+
+  router.get(
+    "/accommodation-changes",
+    canView,
+    (_req: Request, res: Response) => {
+      res.json(adminStore.listAccommodationChanges());
+    },
+  );
+
+  router.put(
+    "/groups/:groupId/accommodation",
+    canEdit,
+    express.json(),
+    (req: Request<{ groupId: string }>, res: Response) => {
+      adminStore.setGroupAccommodation(
+        getIdentity(res).sub,
+        parseGroupId(req.params.groupId),
+        parseAccommodation(req.body),
+      );
+      res.json(adminStore.listGuests(true));
+    },
+  );
+
+  router.put(
+    "/guests/:guestId/accommodation",
+    canEdit,
+    express.json(),
+    (req: Request<{ guestId: string }>, res: Response) => {
+      adminStore.setOwnAccommodation(
+        getIdentity(res).sub,
+        parseGuestId(req.params.guestId),
+        parseAccommodation(req.body),
+      );
+      res.json(adminStore.listGuests(true));
+    },
+  );
 
   router.put(
     "/rsvps",

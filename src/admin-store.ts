@@ -2,14 +2,18 @@ import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { ExpectedError } from "./error-handler.js";
 import {
+  accommodationUpsert,
   NOW,
   RSVP_COLUMNS,
   RSVP_INSERT_COLUMNS,
   RSVP_INSERT_VALUES,
   RSVP_UPSERT,
   toBoolean,
+  toCoordinates,
   toRsvp,
   toRsvpParams,
+  type AccommodationParams,
+  type Coordinates,
   type Role,
   type Rsvp,
   type RsvpInput,
@@ -34,18 +38,23 @@ export type AdminGuest = {
   updatedBy: number | null;
   roles: Role[];
   rsvp: Rsvp | null;
+  groupAccommodation: Coordinates | null;
+  // set when they're staying somewhere other than the rest of their group
+  ownAccommodation: Coordinates | null;
 };
 
+// the previous* and was* fields are null for a guest's first answer
 export type RsvpChange = {
   recordedAt: string;
   guestId: number;
   guest: string;
-  previousAnswerBy: string;
+  previousAnswerBy: string | null;
   changedBy: string;
+  // empty for a first answer
   changedFields: string;
-  wasAttending: boolean;
+  wasAttending: boolean | null;
   nowAttending: boolean;
-  prevHistoryId: number;
+  prevHistoryId: number | null;
   historyId: number;
 };
 
@@ -73,19 +82,57 @@ export type RoleHistoryEntry = {
 // respondedAt is when this version of the answer was recorded
 export type RsvpHistoryEntry = Rsvp & { historyId: number };
 
+// "group" entries are for the group the guest is in now
+export type AccommodationHistoryEntry = {
+  historyId: number;
+  scope: "group" | "own";
+  accommodation: Coordinates | null;
+  updatedBy: number;
+  recordedAt: string;
+};
+
 export type GuestHistory = {
   details: GuestHistoryEntry[];
   roles: RoleHistoryEntry[];
   rsvps: RsvpHistoryEntry[];
+  accommodation: AccommodationHistoryEntry[];
+};
+
+// one of groupId or guestId, for a group's place or a guest's own; previous* is null for a first pin
+export type AccommodationChange = {
+  recordedAt: string;
+  groupId: number | null;
+  guestId: number | null;
+  previousSetBy: string | null;
+  changedBy: string;
+  hadPlace: boolean;
+  hasPlace: boolean;
+  prevHistoryId: number | null;
+  historyId: number;
+};
+
+type AccommodationChangeRow = Omit<
+  AccommodationChange,
+  "hadPlace" | "hasPlace"
+> & {
+  hadPlace: SqliteBoolean;
+  hasPlace: SqliteBoolean;
 };
 
 type AdminGuestRow = RsvpRow &
-  Omit<AdminGuest, "roles" | "rsvp"> & {
+  Omit<
+    AdminGuest,
+    "roles" | "rsvp" | "groupAccommodation" | "ownAccommodation"
+  > & {
     roles: string;
+    groupLat: number | null;
+    groupLng: number | null;
+    ownLat: number | null;
+    ownLng: number | null;
   };
 
 type RsvpChangeRow = Omit<RsvpChange, "wasAttending" | "nowAttending"> & {
-  wasAttending: SqliteBoolean;
+  wasAttending: SqliteBoolean | null;
   nowAttending: SqliteBoolean;
 };
 
@@ -109,9 +156,15 @@ const ADMIN_GUEST_SELECT = `
         ORDER BY role
       )
     ) AS roles,
-    ${RSVP_COLUMNS}
+    ${RSVP_COLUMNS},
+    group_place.lat AS groupLat,
+    group_place.lng AS groupLng,
+    own_place.lat AS ownLat,
+    own_place.lng AS ownLng
   FROM guests AS guest
   LEFT JOIN rsvps AS rsvp ON rsvp.guest_id = guest.guest_id
+  LEFT JOIN group_accommodation AS group_place ON group_place.group_id = guest.group_id
+  LEFT JOIN guest_accommodation AS own_place ON own_place.guest_id = guest.guest_id
 `;
 
 const toAdminGuest = ({
@@ -125,6 +178,10 @@ const toAdminGuest = ({
   signedUpAt,
   updatedBy,
   roles,
+  groupLat,
+  groupLng,
+  ownLat,
+  ownLng,
   ...rsvp
 }: AdminGuestRow): AdminGuest => ({
   guestId,
@@ -138,6 +195,8 @@ const toAdminGuest = ({
   updatedBy,
   roles: JSON.parse(roles) as Role[],
   rsvp: toRsvp(rsvp),
+  groupAccommodation: toCoordinates(groupLat, groupLng),
+  ownAccommodation: toCoordinates(ownLat, ownLng),
 });
 
 export const createAdminStore = (db: Database.Database) => {
@@ -187,8 +246,6 @@ export const createAdminStore = (db: Database.Database) => {
         dietary,
         dietary_other_details AS dietaryOtherDetails,
         shuttle,
-        accommodation_lat AS accommodationLat,
-        accommodation_lng AS accommodationLng,
         responded_by AS respondedBy,
         recorded_at AS respondedAt
       FROM rsvp_history
@@ -232,6 +289,52 @@ export const createAdminStore = (db: Database.Database) => {
       WHERE guest_id = $guestId
       ORDER BY guest_role_id;
     `,
+  );
+  const accommodationHistoryStatement = db.prepare<
+    { guestId: number; groupId: number },
+    Omit<AccommodationHistoryEntry, "accommodation"> & {
+      lat: number | null;
+      lng: number | null;
+    }
+  >(
+    `
+      SELECT
+        history_id AS historyId,
+        iif(guest_id IS NULL, 'group', 'own') AS scope,
+        lat,
+        lng,
+        updated_by AS updatedBy,
+        recorded_at AS recordedAt
+      FROM accommodation_history
+      WHERE group_id = $groupId OR guest_id = $guestId
+      ORDER BY history_id;
+    `,
+  );
+  const accommodationChangesStatement = db.prepare<[], AccommodationChangeRow>(
+    `
+      SELECT
+        recorded_at AS recordedAt,
+        group_id AS groupId,
+        guest_id AS guestId,
+        previous_set_by AS previousSetBy,
+        changed_by AS changedBy,
+        had_place AS hadPlace,
+        has_place AS hasPlace,
+        prev_history_id AS prevHistoryId,
+        history_id AS historyId
+      FROM accommodation_changes;
+    `,
+  );
+  const groupExistsStatement = db
+    .prepare<{ groupId: number }, number>(
+      `SELECT 1 FROM guests WHERE group_id = $groupId LIMIT 1;`,
+    )
+    .pluck();
+  const groupAccommodationStatement = db.prepare<AccommodationParams>(
+    accommodationUpsert("group_accommodation", "group_id"),
+  );
+  const guestAccommodationStatement = db.prepare<AccommodationParams>(
+    accommodationUpsert("guest_accommodation", "guest_id"),
   );
   const rsvpStatement = db.prepare<
     RsvpParams & { adminId: number },
@@ -401,6 +504,34 @@ export const createAdminStore = (db: Database.Database) => {
     },
   );
 
+  const setGroupAccommodation = db.transaction(
+    (sub: string, groupId: number, place: Coordinates | null) => {
+      const adminId = requireAdminId(sub);
+      if (groupExistsStatement.get({ groupId }) === undefined) {
+        throw new ExpectedError(`group ${groupId} not found`, 404);
+      }
+      groupAccommodationStatement.run({
+        id: groupId,
+        lat: place?.lat ?? null,
+        lng: place?.lng ?? null,
+        updatedBy: adminId,
+      });
+    },
+  );
+
+  const setOwnAccommodation = db.transaction(
+    (sub: string, guestId: number, place: Coordinates | null) => {
+      const adminId = requireAdminId(sub);
+      getGuest(guestId);
+      guestAccommodationStatement.run({
+        id: guestId,
+        lat: place?.lat ?? null,
+        lng: place?.lng ?? null,
+        updatedBy: adminId,
+      });
+    },
+  );
+
   return {
     // invites let whoever holds them claim a guest, so only admins see them
     listGuests: (includeInvites: boolean): AdminGuest[] =>
@@ -416,15 +547,22 @@ export const createAdminStore = (db: Database.Database) => {
     listRsvpChanges: (): RsvpChange[] =>
       rsvpChangesStatement.all().map((row) => ({
         ...row,
-        wasAttending: toBoolean(row.wasAttending)!,
+        wasAttending: toBoolean(row.wasAttending),
         nowAttending: toBoolean(row.nowAttending)!,
+      })),
+
+    listAccommodationChanges: (): AccommodationChange[] =>
+      accommodationChangesStatement.all().map((row) => ({
+        ...row,
+        hadPlace: toBoolean(row.hadPlace)!,
+        hasPlace: toBoolean(row.hasPlace)!,
       })),
 
     getGuestHistory: (
       guestId: number,
       includeInvites: boolean,
     ): GuestHistory => {
-      getGuest(guestId);
+      const { groupId } = getGuest(guestId);
       return {
         details: guestHistoryStatement
           .all({ guestId })
@@ -433,11 +571,29 @@ export const createAdminStore = (db: Database.Database) => {
         rsvps: rsvpHistoryStatement
           .all({ guestId })
           .map(({ historyId, ...row }) => ({ historyId, ...toRsvp(row)! })),
+        accommodation: accommodationHistoryStatement
+          .all({ guestId, groupId })
+          .map(({ lat, lng, ...row }) => ({
+            ...row,
+            accommodation: toCoordinates(lat, lng),
+          })),
       };
     },
 
     submitRsvps: (sub: string, rsvps: RsvpInput[]): void =>
       submitRsvps(sub, rsvps),
+
+    setGroupAccommodation: (
+      sub: string,
+      groupId: number,
+      place: Coordinates | null,
+    ): void => setGroupAccommodation(sub, groupId, place),
+
+    setOwnAccommodation: (
+      sub: string,
+      guestId: number,
+      place: Coordinates | null,
+    ): void => setOwnAccommodation(sub, guestId, place),
 
     createGuest: (sub: string, guest: NewGuestInput): AdminGuest =>
       createGuest(sub, guest),

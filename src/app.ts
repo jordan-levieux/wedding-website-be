@@ -11,7 +11,11 @@ import type { AdminStore } from "./admin-store.js";
 import { getIdentity } from "./auth.js";
 import { errorHandler, ExpectedError } from "./error-handler.js";
 import type { Group, GuestStore } from "./guest-store.js";
-import { parseRsvpBatch } from "./validation.js";
+import {
+  parseAccommodation,
+  parseGuestId,
+  parseRsvpBatch,
+} from "./validation.js";
 
 export const createApp = (deps: {
   db: Database.Database;
@@ -77,6 +81,33 @@ export const createApp = (deps: {
         throw new ExpectedError("the RSVP deadline has passed", 403);
       }
       store.submitRsvps(sub, parseRsvpBatch(req.body));
+      res.json(groupResponse(store.getGroup(sub)!));
+    },
+  );
+
+  // where people are staying can still change after the RSVP deadline
+  app.put(
+    "/accommodation",
+    authenticate,
+    express.json(),
+    (req: Request, res: Response) => {
+      const sub = getIdentity(res).sub;
+      store.setGroupAccommodation(sub, parseAccommodation(req.body));
+      res.json(groupResponse(store.getGroup(sub)!));
+    },
+  );
+
+  app.put(
+    "/accommodation/:guestId",
+    authenticate,
+    express.json(),
+    (req: Request<{ guestId: string }>, res: Response) => {
+      const sub = getIdentity(res).sub;
+      store.setOwnAccommodation(
+        sub,
+        parseGuestId(req.params.guestId),
+        parseAccommodation(req.body),
+      );
       res.json(groupResponse(store.getGroup(sub)!));
     },
   );

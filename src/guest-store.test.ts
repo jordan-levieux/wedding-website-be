@@ -67,9 +67,22 @@ describe("guest store", () => {
     assert.deepEqual(store.getGroup("sub-alice"), {
       selfId: 1,
       roles: [],
+      accommodation: null,
       guests: [
-        { guestId: 1, name: "Alice", surname: "Smith", rsvp: null },
-        { guestId: 2, name: "Bob", surname: "Smith", rsvp: null },
+        {
+          guestId: 1,
+          name: "Alice",
+          surname: "Smith",
+          rsvp: null,
+          ownAccommodation: null,
+        },
+        {
+          guestId: 2,
+          name: "Bob",
+          surname: "Smith",
+          rsvp: null,
+          ownAccommodation: null,
+        },
       ],
     });
   });
@@ -84,12 +97,12 @@ describe("guest store", () => {
     assert.deepEqual(store.getGroup("sub-carol")?.roles, ["admin", "viewer"]);
   });
 
-  test("RSVPs come back with real booleans and accommodation as coordinates", () => {
+  test("RSVPs come back with real booleans", () => {
     signUpAlice();
     db.exec(`
-      INSERT INTO rsvps (guest_id, attending, dietary, shuttle, accommodation_lat, accommodation_lng, responded_by, responded_at) VALUES
-        (1, 1, 'vegetarian', 0, -33.9249, 18.4241, 1, '2026-10-24T10:00:00.000Z'),
-        (2, 0, NULL, NULL, NULL, NULL, 1, '2026-10-24T10:00:00.000Z');
+      INSERT INTO rsvps (guest_id, attending, dietary, shuttle, responded_by, responded_at) VALUES
+        (1, 1, 'vegetarian', 0, 1, '2026-10-24T10:00:00.000Z'),
+        (2, 0, NULL, NULL, 1, '2026-10-24T10:00:00.000Z');
     `);
 
     const [alice, bob] = store.getGroup("sub-alice")?.guests ?? [];
@@ -99,11 +112,40 @@ describe("guest store", () => {
       dietary: "vegetarian",
       dietaryOtherDetails: null,
       shuttle: false,
-      accommodation: { lat: -33.9249, lng: 18.4241 },
       respondedBy: 1,
       respondedAt: "2026-10-24T10:00:00.000Z",
     });
     assert.equal(bob?.rsvp?.attending, false);
-    assert.equal(bob?.rsvp?.accommodation, null);
+  });
+
+  test("the group's place applies to everyone, and a guest can have their own", () => {
+    signUpAlice();
+    store.setGroupAccommodation("sub-alice", { lat: -33.95, lng: 22.46 });
+    store.setOwnAccommodation("sub-alice", 2, { lat: -33.99, lng: 22.58 });
+
+    const group = store.getGroup("sub-alice");
+    assert.deepEqual(group?.accommodation, { lat: -33.95, lng: 22.46 });
+    assert.deepEqual(
+      group?.guests.map((guest) => guest.ownAccommodation),
+      [null, { lat: -33.99, lng: 22.58 }],
+    );
+
+    store.setOwnAccommodation("sub-alice", 2, null);
+    store.setGroupAccommodation("sub-alice", null);
+    const cleared = store.getGroup("sub-alice");
+    assert.equal(cleared?.accommodation, null);
+    assert.equal(cleared?.guests[1]?.ownAccommodation, null);
+  });
+
+  test("a guest's own place can only be set from within their group", () => {
+    signUpAlice();
+    assert.throws(
+      () => store.setOwnAccommodation("sub-alice", 3, { lat: 0, lng: 0 }),
+      /only say where guests in your group are staying/,
+    );
+    assert.throws(
+      () => store.setGroupAccommodation("sub-nobody", { lat: 0, lng: 0 }),
+      /not registered/,
+    );
   });
 });

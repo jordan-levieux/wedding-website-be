@@ -20,7 +20,6 @@ export type Rsvp = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: boolean | null;
-  accommodation: Coordinates | null;
   respondedBy: number;
   respondedAt: string;
 };
@@ -31,7 +30,6 @@ export type RsvpInput = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: boolean | null;
-  accommodation: Coordinates | null;
 };
 
 export type SqliteBoolean = 0 | 1;
@@ -42,8 +40,6 @@ export type RsvpRow = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: SqliteBoolean | null;
-  accommodationLat: number | null;
-  accommodationLng: number | null;
   respondedBy: number | null;
   respondedAt: string | null;
 };
@@ -53,8 +49,6 @@ export const RSVP_COLUMNS = `
   rsvp.dietary,
   rsvp.dietary_other_details AS dietaryOtherDetails,
   rsvp.shuttle,
-  rsvp.accommodation_lat AS accommodationLat,
-  rsvp.accommodation_lng AS accommodationLng,
   rsvp.responded_by AS respondedBy,
   rsvp.responded_at AS respondedAt
 `;
@@ -65,18 +59,15 @@ export type RsvpParams = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: SqliteBoolean | null;
-  accommodationLat: number | null;
-  accommodationLng: number | null;
 };
 
 // for an `INSERT INTO rsvps (...) SELECT <guest_id>, ${RSVP_INSERT_VALUES}, <responded_by>, <responded_at> ...`
 export const RSVP_INSERT_COLUMNS = `
-  guest_id, attending, dietary, dietary_other_details, shuttle,
-  accommodation_lat, accommodation_lng, responded_by, responded_at
+  guest_id, attending, dietary, dietary_other_details, shuttle, responded_by, responded_at
 `;
 
 export const RSVP_INSERT_VALUES = `
-  $attending, $dietary, $dietaryOtherDetails, $shuttle, $accommodationLat, $accommodationLng
+  $attending, $dietary, $dietaryOtherDetails, $shuttle
 `;
 
 export const RSVP_UPSERT = `
@@ -85,8 +76,6 @@ export const RSVP_UPSERT = `
     dietary = excluded.dietary,
     dietary_other_details = excluded.dietary_other_details,
     shuttle = excluded.shuttle,
-    accommodation_lat = excluded.accommodation_lat,
-    accommodation_lng = excluded.accommodation_lng,
     responded_by = excluded.responded_by,
     responded_at = excluded.responded_at
   RETURNING guest_id AS guestId
@@ -108,10 +97,6 @@ export const toRsvp = (row: RsvpRow): Rsvp | null =>
         dietary: row.dietary,
         dietaryOtherDetails: row.dietaryOtherDetails,
         shuttle: toBoolean(row.shuttle),
-        accommodation:
-          row.accommodationLat === null || row.accommodationLng === null
-            ? null
-            : { lat: row.accommodationLat, lng: row.accommodationLng },
         respondedBy: row.respondedBy!,
         respondedAt: row.respondedAt!,
       };
@@ -122,6 +107,27 @@ export const toRsvpParams = (rsvp: RsvpInput): RsvpParams => ({
   dietary: rsvp.dietary,
   dietaryOtherDetails: rsvp.dietaryOtherDetails,
   shuttle: rsvp.shuttle === null ? null : toSqliteBoolean(rsvp.shuttle),
-  accommodationLat: rsvp.accommodation?.lat ?? null,
-  accommodationLng: rsvp.accommodation?.lng ?? null,
 });
+
+export const toCoordinates = (
+  lat: number | null,
+  lng: number | null,
+): Coordinates | null => (lat === null || lng === null ? null : { lat, lng });
+
+// for an upsert into group_accommodation or guest_accommodation, keyed on $id
+export const accommodationUpsert = (table: string, key: string) => `
+  INSERT INTO ${table} (${key}, lat, lng, updated_by, updated_at)
+  VALUES ($id, $lat, $lng, $updatedBy, ${NOW})
+  ON CONFLICT (${key}) DO UPDATE SET
+    lat = excluded.lat,
+    lng = excluded.lng,
+    updated_by = excluded.updated_by,
+    updated_at = excluded.updated_at;
+`;
+
+export type AccommodationParams = {
+  id: number;
+  lat: number | null;
+  lng: number | null;
+  updatedBy: number;
+};

@@ -166,7 +166,6 @@ describe("API", () => {
             dietary: "other",
             dietaryOtherDetails: "  no mushrooms ",
             shuttle: true,
-            accommodation: { lat: -33.9249, lng: 18.4241 },
           },
           {
             guestId: 1,
@@ -185,7 +184,6 @@ describe("API", () => {
           dietary: "other",
           dietaryOtherDetails: "no mushrooms",
           shuttle: true,
-          accommodation: { lat: -33.9249, lng: 18.4241 },
           respondedBy: 2,
           respondedAt: undefined,
         },
@@ -198,7 +196,6 @@ describe("API", () => {
           dietary: null,
           dietaryOtherDetails: null,
           shuttle: null,
-          accommodation: null,
           respondedBy: 2,
           respondedAt: undefined,
         },
@@ -235,8 +232,6 @@ describe("API", () => {
         { rsvps: [{ ...attending(2), dietary: "carnivore" }] },
         { rsvps: [{ ...attending(2), dietary: "other" }] },
         { rsvps: [{ ...attending(2), shuttle: "yes" }] },
-        { rsvps: [{ ...attending(2), accommodation: { lat: 91, lng: 0 } }] },
-        { rsvps: [{ ...attending(2), accommodation: { lat: 0 } }] },
         { rsvps: [attending(2), { guestId: 2, attending: false }] },
       ];
       for (const body of invalidBodies) {
@@ -275,11 +270,77 @@ describe("API", () => {
     });
   });
 
+  describe("PUT /accommodation", () => {
+    const place = { lat: -33.95, lng: 22.46 };
+
+    test("sets the group's place, and a guest's own, even after the deadline", async () => {
+      server.close();
+      await start(PAST);
+      const group = await call("PUT", "/accommodation", "bob", {
+        accommodation: place,
+      });
+      assert.equal(group.status, 200);
+      assert.deepEqual(group.body.accommodation, place);
+
+      const own = await call("PUT", "/accommodation/1", "bob", {
+        accommodation: { lat: -33.99, lng: 22.58 },
+      });
+      assert.equal(own.status, 200);
+      assert.deepEqual(
+        own.body.guests.map(
+          (guest: { ownAccommodation: unknown }) => guest.ownAccommodation,
+        ),
+        [{ lat: -33.99, lng: 22.58 }, null],
+      );
+      // Carol's group is untouched
+      const { body: carol } = await call("GET", "/group", "carol");
+      assert.equal(carol.accommodation, null);
+    });
+
+    test("null clears a place", async () => {
+      await call("PUT", "/accommodation", "bob", { accommodation: place });
+      const { body } = await call("PUT", "/accommodation", "bob", {
+        accommodation: null,
+      });
+      assert.equal(body.accommodation, null);
+      assert.equal(historyCount("accommodation_history"), 2);
+    });
+
+    test("only for guests in your own group", async () => {
+      const { status } = await call("PUT", "/accommodation/3", "bob", {
+        accommodation: place,
+      });
+      assert.equal(status, 403);
+      assert.equal(historyCount("accommodation_history"), 0);
+    });
+
+    test("rejects invalid places", async () => {
+      for (const body of [
+        {},
+        { accommodation: { lat: 91, lng: 0 } },
+        { accommodation: { lat: 0 } },
+        { accommodation: "home" },
+      ]) {
+        assert.equal(
+          (await call("PUT", "/accommodation", "bob", body)).status,
+          400,
+          JSON.stringify(body),
+        );
+      }
+      assert.equal(
+        (await call("PUT", "/accommodation/x", "bob", { accommodation: null }))
+          .status,
+        400,
+      );
+    });
+  });
+
   describe("admin read endpoints", () => {
     test("are open to viewers and admins only", async () => {
       for (const path of [
         "/admin/guests",
         "/admin/rsvp-changes",
+        "/admin/accommodation-changes",
         "/admin/guests/2/history",
       ]) {
         assert.equal((await call("GET", path, "carol")).status, 200, path);
@@ -304,6 +365,8 @@ describe("API", () => {
         updatedBy: null,
         roles: ["admin"],
         rsvp: null,
+        groupAccommodation: null,
+        ownAccommodation: null,
       });
     });
 
@@ -335,7 +398,6 @@ describe("API", () => {
           {
             ...attending(2),
             shuttle: null,
-            accommodation: { lat: -33.9, lng: 22.6 },
           },
         ],
       });
@@ -352,7 +414,6 @@ describe("API", () => {
             dietary: "none",
             dietaryOtherDetails: null,
             shuttle: false,
-            accommodation: null,
             respondedBy: 2,
           },
           {
@@ -361,10 +422,47 @@ describe("API", () => {
             dietary: "none",
             dietaryOtherDetails: null,
             shuttle: null,
-            accommodation: { lat: -33.9, lng: 22.6 },
             respondedBy: 1,
           },
         ],
+      );
+    });
+
+    test("history includes the group's place and the guest's own", async () => {
+      await call("PUT", "/accommodation", "bob", {
+        accommodation: { lat: -33.95, lng: 22.46 },
+      });
+      await call("PUT", "/accommodation/1", "bob", {
+        accommodation: { lat: -33.99, lng: 22.58 },
+      });
+      await call("PUT", "/accommodation", "carol", {
+        accommodation: { lat: -33.9, lng: 22.6 },
+      });
+      const { body } = await call("GET", "/admin/guests/2/history", "carol");
+      assert.deepEqual(
+        body.accommodation.map(
+          ({ recordedAt, ...entry }: { recordedAt: string }) => {
+            assert.match(recordedAt, /^\d{4}-\d\d-\d\dT/);
+            return entry;
+          },
+        ),
+        [
+          {
+            historyId: 1,
+            scope: "group",
+            accommodation: { lat: -33.95, lng: 22.46 },
+            updatedBy: 2,
+          },
+        ],
+      );
+      const { body: alice } = await call(
+        "GET",
+        "/admin/guests/1/history",
+        "carol",
+      );
+      assert.deepEqual(
+        alice.accommodation.map((entry: { scope: string }) => entry.scope),
+        ["group", "own"],
       );
     });
 
@@ -396,9 +494,90 @@ describe("API", () => {
         (await call("PATCH", "/admin/guests/4", "carol", { name: "X" })).status,
         403,
       );
+      for (const path of [
+        "/admin/groups/2/accommodation",
+        "/admin/guests/4/accommodation",
+      ]) {
+        assert.equal(
+          (await call("PUT", path, "carol", { accommodation: null })).status,
+          403,
+          path,
+        );
+      }
     });
 
-    test("admins can RSVP for anyone, even after the deadline, and it shows up as a change", async () => {
+    test("admins can set any group's place or guest's own, and changes are listed", async () => {
+      await call("PUT", "/accommodation", "dave", {
+        accommodation: { lat: -33.95, lng: 22.46 },
+      });
+      const group = await call(
+        "PUT",
+        "/admin/groups/2/accommodation",
+        "alice",
+        {
+          accommodation: { lat: -33.93, lng: 22.67 },
+        },
+      );
+      assert.equal(group.status, 200);
+      const dave = group.body.find(
+        (guest: { guestId: number }) => guest.guestId === 4,
+      );
+      assert.deepEqual(dave.groupAccommodation, { lat: -33.93, lng: 22.67 });
+
+      const own = await call("PUT", "/admin/guests/5/accommodation", "alice", {
+        accommodation: { lat: -33.99, lng: 22.58 },
+      });
+      assert.equal(own.status, 200);
+
+      const { body: changes } = await call(
+        "GET",
+        "/admin/accommodation-changes",
+        "carol",
+      );
+      assert.deepEqual(
+        changes.map(
+          (change: {
+            groupId: number | null;
+            guestId: number | null;
+            previousSetBy: string | null;
+            changedBy: string;
+            hadPlace: boolean;
+          }) => [
+            change.groupId,
+            change.guestId,
+            change.previousSetBy,
+            change.changedBy,
+            change.hadPlace,
+          ],
+        ),
+        [
+          [2, null, null, "Dave Jones", false],
+          [2, null, "Dave Jones", "Alice Smith", true],
+          [null, 5, null, "Alice Smith", false],
+        ],
+      );
+    });
+
+    test("an unknown group or guest is a 404", async () => {
+      assert.equal(
+        (
+          await call("PUT", "/admin/groups/99/accommodation", "alice", {
+            accommodation: null,
+          })
+        ).status,
+        404,
+      );
+      assert.equal(
+        (
+          await call("PUT", "/admin/guests/99/accommodation", "alice", {
+            accommodation: null,
+          })
+        ).status,
+        404,
+      );
+    });
+
+    test("admins can RSVP for anyone, even after the deadline, and it shows up after the first answer", async () => {
       await call("PUT", "/rsvp", "dave", { rsvps: [attending(4)] });
       server.close();
       await start(PAST);
@@ -413,12 +592,16 @@ describe("API", () => {
         "/admin/rsvp-changes",
         "carol",
       );
-      assert.equal(changes.length, 1);
-      assert.equal(changes[0].guest, "Dave Jones");
-      assert.equal(changes[0].previousAnswerBy, "Dave Jones");
-      assert.equal(changes[0].changedBy, "Alice Smith");
-      assert.equal(changes[0].wasAttending, true);
-      assert.equal(changes[0].nowAttending, false);
+      assert.equal(changes.length, 2);
+      assert.equal(changes[0].previousAnswerBy, null);
+      assert.equal(changes[0].changedBy, "Dave Jones");
+      assert.equal(changes[0].wasAttending, null);
+      assert.equal(changes[0].changedFields, "");
+      assert.equal(changes[1].guest, "Dave Jones");
+      assert.equal(changes[1].previousAnswerBy, "Dave Jones");
+      assert.equal(changes[1].changedBy, "Alice Smith");
+      assert.equal(changes[1].wasAttending, true);
+      assert.equal(changes[1].nowAttending, false);
     });
 
     test("an unknown guest rolls back an admin RSVP batch", async () => {

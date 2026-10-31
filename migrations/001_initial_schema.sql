@@ -90,13 +90,10 @@ CREATE TABLE rsvps (
     dietary TEXT CHECK (dietary IN ('none', 'vegetarian', 'halaal', 'kosher', 'other')),
     dietary_other_details TEXT,
     shuttle INTEGER CHECK (shuttle IN (0, 1)),
-    accommodation_lat REAL CHECK (accommodation_lat BETWEEN -90 AND 90),
-    accommodation_lng REAL CHECK (accommodation_lng BETWEEN -180 AND 180),
     responded_by INTEGER NOT NULL REFERENCES guests (guest_id),
     responded_at TEXT NOT NULL,
     CHECK (attending = 0 OR dietary IS NOT NULL),
-    CHECK (dietary IS NOT 'other' OR dietary_other_details IS NOT NULL),
-    CHECK ((accommodation_lat IS NULL) = (accommodation_lng IS NULL))
+    CHECK (dietary IS NOT 'other' OR dietary_other_details IS NOT NULL)
 ) STRICT;
 
 CREATE TABLE rsvp_history (
@@ -106,8 +103,6 @@ CREATE TABLE rsvp_history (
     dietary TEXT,
     dietary_other_details TEXT,
     shuttle INTEGER,
-    accommodation_lat REAL,
-    accommodation_lng REAL,
     responded_by INTEGER NOT NULL REFERENCES guests (guest_id),
     -- set by the trigger, so it can't be faked by whoever writes to rsvps
     recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ'))
@@ -117,21 +112,17 @@ CREATE INDEX rsvp_history_guest_id ON rsvp_history (guest_id, history_id);
 
 CREATE TRIGGER rsvps_history_insert AFTER INSERT ON rsvps BEGIN
     INSERT INTO rsvp_history (
-        guest_id, attending, dietary, dietary_other_details, shuttle,
-        accommodation_lat, accommodation_lng, responded_by
+        guest_id, attending, dietary, dietary_other_details, shuttle, responded_by
     ) VALUES (
-        NEW.guest_id, NEW.attending, NEW.dietary, NEW.dietary_other_details, NEW.shuttle,
-        NEW.accommodation_lat, NEW.accommodation_lng, NEW.responded_by
+        NEW.guest_id, NEW.attending, NEW.dietary, NEW.dietary_other_details, NEW.shuttle, NEW.responded_by
     );
 END;
 
 CREATE TRIGGER rsvps_history_update AFTER UPDATE ON rsvps BEGIN
     INSERT INTO rsvp_history (
-        guest_id, attending, dietary, dietary_other_details, shuttle,
-        accommodation_lat, accommodation_lng, responded_by
+        guest_id, attending, dietary, dietary_other_details, shuttle, responded_by
     ) VALUES (
-        NEW.guest_id, NEW.attending, NEW.dietary, NEW.dietary_other_details, NEW.shuttle,
-        NEW.accommodation_lat, NEW.accommodation_lng, NEW.responded_by
+        NEW.guest_id, NEW.attending, NEW.dietary, NEW.dietary_other_details, NEW.shuttle, NEW.responded_by
     );
 END;
 
@@ -154,8 +145,6 @@ WITH history AS (
         LAG(h.dietary) OVER w AS prev_dietary,
         LAG(h.dietary_other_details) OVER w AS prev_dietary_other_details,
         LAG(h.shuttle) OVER w AS prev_shuttle,
-        LAG(h.accommodation_lat) OVER w AS prev_accommodation_lat,
-        LAG(h.accommodation_lng) OVER w AS prev_accommodation_lng,
         LAG(h.responded_by) OVER w AS prev_responded_by
     FROM rsvp_history h
     WINDOW w AS (PARTITION BY h.guest_id ORDER BY h.history_id)
@@ -167,8 +156,7 @@ changes AS (
             iif(attending IS NOT prev_attending, 'attending', NULL),
             iif(dietary IS NOT prev_dietary, 'dietary', NULL),
             iif(dietary_other_details IS NOT prev_dietary_other_details, 'dietary_other_details', NULL),
-            iif(shuttle IS NOT prev_shuttle, 'shuttle', NULL),
-            iif(accommodation_lat IS NOT prev_accommodation_lat OR accommodation_lng IS NOT prev_accommodation_lng, 'accommodation', NULL)
+            iif(shuttle IS NOT prev_shuttle, 'shuttle', NULL)
         ) AS changed_fields
     FROM history
     WHERE prev_history_id IS NOT NULL
@@ -190,3 +178,105 @@ JOIN guests previous_responder ON previous_responder.guest_id = c.prev_responded
 JOIN guests responder ON responder.guest_id = c.responded_by
 WHERE c.changed_fields <> ''
 ORDER BY c.history_id;
+
+-- Where guests are staying, kept apart from RSVPs so it can still change after the deadline. A group's
+-- place applies to everyone in it who hasn't got a place of their own. Clearing a place keeps its row
+-- with NULL coordinates, so the history records who cleared it.
+CREATE TABLE group_accommodation (
+    group_id INTEGER PRIMARY KEY,
+    lat REAL CHECK (lat BETWEEN -90 AND 90),
+    lng REAL CHECK (lng BETWEEN -180 AND 180),
+    updated_by INTEGER NOT NULL REFERENCES guests (guest_id),
+    updated_at TEXT NOT NULL,
+    CHECK ((lat IS NULL) = (lng IS NULL))
+) STRICT;
+
+CREATE TABLE guest_accommodation (
+    guest_id INTEGER PRIMARY KEY REFERENCES guests (guest_id),
+    lat REAL CHECK (lat BETWEEN -90 AND 90),
+    lng REAL CHECK (lng BETWEEN -180 AND 180),
+    updated_by INTEGER NOT NULL REFERENCES guests (guest_id),
+    updated_at TEXT NOT NULL,
+    CHECK ((lat IS NULL) = (lng IS NULL))
+) STRICT;
+
+-- one of group_id or guest_id, matching the table the change was made to
+CREATE TABLE accommodation_history (
+    history_id INTEGER PRIMARY KEY,
+    group_id INTEGER,
+    guest_id INTEGER REFERENCES guests (guest_id),
+    lat REAL,
+    lng REAL,
+    updated_by INTEGER NOT NULL REFERENCES guests (guest_id),
+    recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ')),
+    CHECK ((group_id IS NULL) <> (guest_id IS NULL))
+) STRICT;
+
+CREATE INDEX accommodation_history_group_id ON accommodation_history (group_id, history_id);
+CREATE INDEX accommodation_history_guest_id ON accommodation_history (guest_id, history_id);
+
+CREATE TRIGGER group_accommodation_history_insert AFTER INSERT ON group_accommodation BEGIN
+    INSERT INTO accommodation_history (group_id, lat, lng, updated_by)
+    VALUES (NEW.group_id, NEW.lat, NEW.lng, NEW.updated_by);
+END;
+
+CREATE TRIGGER group_accommodation_history_update AFTER UPDATE ON group_accommodation BEGIN
+    INSERT INTO accommodation_history (group_id, lat, lng, updated_by)
+    VALUES (NEW.group_id, NEW.lat, NEW.lng, NEW.updated_by);
+END;
+
+CREATE TRIGGER guest_accommodation_history_insert AFTER INSERT ON guest_accommodation BEGIN
+    INSERT INTO accommodation_history (guest_id, lat, lng, updated_by)
+    VALUES (NEW.guest_id, NEW.lat, NEW.lng, NEW.updated_by);
+END;
+
+CREATE TRIGGER guest_accommodation_history_update AFTER UPDATE ON guest_accommodation BEGIN
+    INSERT INTO accommodation_history (guest_id, lat, lng, updated_by)
+    VALUES (NEW.guest_id, NEW.lat, NEW.lng, NEW.updated_by);
+END;
+
+CREATE TRIGGER group_accommodation_no_delete BEFORE DELETE ON group_accommodation BEGIN
+    SELECT RAISE(ABORT, 'clear the coordinates instead of deleting the row');
+END;
+
+CREATE TRIGGER guest_accommodation_no_delete BEFORE DELETE ON guest_accommodation BEGIN
+    SELECT RAISE(ABORT, 'clear the coordinates instead of deleting the row');
+END;
+
+CREATE TRIGGER accommodation_history_no_update BEFORE UPDATE ON accommodation_history BEGIN
+    SELECT RAISE(ABORT, 'accommodation_history is append-only');
+END;
+
+CREATE TRIGGER accommodation_history_no_delete BEFORE DELETE ON accommodation_history BEGIN
+    SELECT RAISE(ABORT, 'accommodation_history is append-only');
+END;
+
+-- Every change to a place that had already been set (a first pin isn't a change), with who set the
+-- old and the new one. Saving the same place again isn't listed.
+CREATE VIEW accommodation_changes AS
+WITH history AS (
+    SELECT
+        h.*,
+        LAG(h.history_id) OVER w AS prev_history_id,
+        LAG(h.lat) OVER w AS prev_lat,
+        LAG(h.lng) OVER w AS prev_lng,
+        LAG(h.updated_by) OVER w AS prev_updated_by
+    FROM accommodation_history h
+    WINDOW w AS (PARTITION BY h.group_id, h.guest_id ORDER BY h.history_id)
+)
+SELECT
+    h.recorded_at,
+    h.group_id,
+    h.guest_id,
+    previous_setter.name || ' ' || previous_setter.surname AS previous_set_by,
+    setter.name || ' ' || setter.surname AS changed_by,
+    h.prev_lat IS NOT NULL AS had_place,
+    h.lat IS NOT NULL AS has_place,
+    h.prev_history_id,
+    h.history_id
+FROM history h
+JOIN guests previous_setter ON previous_setter.guest_id = h.prev_updated_by
+JOIN guests setter ON setter.guest_id = h.updated_by
+WHERE h.prev_history_id IS NOT NULL
+    AND (h.lat IS NOT h.prev_lat OR h.lng IS NOT h.prev_lng)
+ORDER BY h.history_id;

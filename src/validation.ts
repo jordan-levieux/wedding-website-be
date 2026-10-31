@@ -20,7 +20,7 @@ const isId = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value > 0;
 
 const parseCoordinates = (value: unknown, at: string): Coordinates | null => {
-  if (value === undefined || value === null) {
+  if (value === null) {
     return null;
   }
   if (!isObject(value)) {
@@ -71,7 +71,6 @@ const parseRsvp = (value: unknown, index: number): RsvpInput => {
       dietary: null,
       dietaryOtherDetails: null,
       shuttle: null,
-      accommodation: null,
     };
   }
   if (!DIETARY_OPTIONS.includes(dietary as DietaryOption)) {
@@ -99,8 +98,23 @@ const parseRsvp = (value: unknown, index: number): RsvpInput => {
     dietaryOtherDetails:
       dietary === "other" ? (dietaryOtherDetails as string).trim() : null,
     shuttle,
-    accommodation: parseCoordinates(value.accommodation, `${at}.accommodation`),
   };
+};
+
+// { accommodation: { lat, lng } } sets a place, { accommodation: null } clears it
+export const parseAccommodation = (body: unknown): Coordinates | null => {
+  if (!isObject(body) || !("accommodation" in body)) {
+    throw badRequest("expected { accommodation: { lat, lng } or null }");
+  }
+  return parseCoordinates(body.accommodation, "accommodation");
+};
+
+export const parseGroupId = (value: string | undefined): number => {
+  const groupId = Number(value);
+  if (!isId(groupId)) {
+    throw badRequest("group id must be a positive integer");
+  }
+  return groupId;
 };
 
 export const parseRsvpBatch = (body: unknown): RsvpInput[] => {

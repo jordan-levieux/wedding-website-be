@@ -22,7 +22,7 @@ describe("openDatabase", () => {
     assert.equal(db.pragma("journal_mode", { simple: true }), "delete");
     assert.equal(db.pragma("synchronous", { simple: true }), 2); // FULL
     assert.equal(db.pragma("foreign_keys", { simple: true }), 1);
-    assert.equal(db.pragma("user_version", { simple: true }), 1);
+    assert.equal(db.pragma("user_version", { simple: true }), 2);
     db.close();
   });
 
@@ -30,7 +30,7 @@ describe("openDatabase", () => {
     const filePath = join(tempDir, "current.db");
     openDatabase(filePath).close();
     const db = openDatabase(filePath);
-    assert.equal(db.pragma("user_version", { simple: true }), 1);
+    assert.equal(db.pragma("user_version", { simple: true }), 2);
     db.close();
   });
 });
@@ -42,19 +42,17 @@ describe("rsvps", () => {
     guestId: number,
     attending: 0 | 1,
     respondedBy: number,
-    accommodation: [number, number] | [null, null] = [null, null],
+    shuttle: 0 | 1 = 0,
   ) =>
     db
       .prepare(
         `
-          INSERT INTO rsvps (guest_id, attending, dietary, shuttle, accommodation_lat, accommodation_lng, responded_by, responded_at)
-          VALUES ($guestId, $attending, iif($attending, 'none', NULL), iif($attending, 0, NULL), $lat, $lng, $respondedBy, strftime('%Y-%m-%dT%H:%M:%fZ'))
+          INSERT INTO rsvps (guest_id, attending, dietary, shuttle, responded_by, responded_at)
+          VALUES ($guestId, $attending, iif($attending, 'none', NULL), iif($attending, $shuttle, NULL), $respondedBy, strftime('%Y-%m-%dT%H:%M:%fZ'))
           ON CONFLICT (guest_id) DO UPDATE SET
             attending = excluded.attending,
             dietary = excluded.dietary,
             shuttle = excluded.shuttle,
-            accommodation_lat = excluded.accommodation_lat,
-            accommodation_lng = excluded.accommodation_lng,
             responded_by = excluded.responded_by,
             responded_at = excluded.responded_at;
         `,
@@ -62,8 +60,7 @@ describe("rsvps", () => {
       .run({
         guestId,
         attending,
-        lat: accommodation[0],
-        lng: accommodation[1],
+        shuttle,
         respondedBy,
       });
 
@@ -76,24 +73,6 @@ describe("rsvps", () => {
         (1, 1, 'Alice', 'Smith'),
         (2, 1, 'Bob', 'Smith');
     `);
-  });
-
-  test("accommodation must be a valid lat/lng pair or nothing", () => {
-    answer(1, 1, 1, [-33.9249, 18.4241]);
-    answer(2, 1, 2);
-    assert.throws(
-      () => answer(1, 1, 1, [91, 18.4241]),
-      /CHECK constraint failed/,
-    );
-    assert.throws(
-      () => answer(1, 1, 1, [-33.9249, 181]),
-      /CHECK constraint failed/,
-    );
-    assert.throws(
-      () =>
-        db.exec("UPDATE rsvps SET accommodation_lng = NULL WHERE guest_id = 1"),
-      /CHECK constraint failed/,
-    );
   });
 
   test("attending guests must give a dietary answer, and details for 'other'", () => {
@@ -130,12 +109,12 @@ describe("rsvps", () => {
     ]);
   });
 
-  test("rsvp_changes only lists answers that changed, and who changed them", () => {
+  test("rsvp_changes lists first answers and answers that changed, and who gave them", () => {
     answer(2, 1, 2);
     answer(2, 1, 2);
     answer(2, 0, 1);
     answer(1, 1, 1);
-    answer(1, 1, 1, [-33.9249, 18.4241]);
+    answer(1, 1, 1, 1);
 
     const changes = db
       .prepare(
@@ -143,6 +122,14 @@ describe("rsvps", () => {
       )
       .all();
     assert.deepEqual(changes, [
+      {
+        guest: "Bob Smith",
+        previous_answer_by: null,
+        changed_by: "Bob Smith",
+        changed_fields: "",
+        was_attending: null,
+        now_attending: 1,
+      },
       {
         guest: "Bob Smith",
         previous_answer_by: "Bob Smith",
@@ -153,9 +140,17 @@ describe("rsvps", () => {
       },
       {
         guest: "Alice Smith",
+        previous_answer_by: null,
+        changed_by: "Alice Smith",
+        changed_fields: "",
+        was_attending: null,
+        now_attending: 1,
+      },
+      {
+        guest: "Alice Smith",
         previous_answer_by: "Alice Smith",
         changed_by: "Alice Smith",
-        changed_fields: "accommodation",
+        changed_fields: "shuttle",
         was_attending: 1,
         now_attending: 1,
       },
@@ -226,5 +221,135 @@ describe("rsvps", () => {
       /append-only/,
     );
     assert.throws(() => db.exec("DELETE FROM rsvp_history"), /append-only/);
+  });
+});
+
+describe("accommodation", () => {
+  let db: Database.Database;
+  const place = (
+    table: string,
+    key: string,
+    id: number,
+    lat: number | null,
+    lng: number | null,
+    by: number,
+  ) =>
+    db
+      .prepare(
+        `
+          INSERT INTO ${table} (${key}, lat, lng, updated_by, updated_at)
+          VALUES ($id, $lat, $lng, $by, 'now')
+          ON CONFLICT (${key}) DO UPDATE SET
+            lat = excluded.lat, lng = excluded.lng, updated_by = excluded.updated_by;
+        `,
+      )
+      .run({ id, lat, lng, by });
+  const groupPlace = (lat: number | null, lng: number | null, by = 1) =>
+    place("group_accommodation", "group_id", 1, lat, lng, by);
+  const ownPlace = (lat: number | null, lng: number | null, by = 2) =>
+    place("guest_accommodation", "guest_id", 2, lat, lng, by);
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    migrate(db);
+    db.exec(`
+      INSERT INTO guests (guest_id, group_id, name, surname) VALUES
+        (1, 1, 'Alice', 'Smith'),
+        (2, 1, 'Bob', 'Smith');
+    `);
+  });
+
+  test("a place must be a valid lat/lng pair or nothing", () => {
+    groupPlace(-33.9249, 18.4241);
+    ownPlace(null, null);
+    assert.throws(() => groupPlace(91, 18.4241), /CHECK constraint failed/);
+    assert.throws(() => ownPlace(-33.9249, 181), /CHECK constraint failed/);
+    assert.throws(() => groupPlace(-33.9249, null), /CHECK constraint failed/);
+  });
+
+  test("places are cleared rather than deleted, and every change is recorded", () => {
+    groupPlace(-33.95, 22.46);
+    ownPlace(-33.99, 22.58);
+    groupPlace(null, null, 2);
+    assert.throws(
+      () => db.exec("DELETE FROM group_accommodation"),
+      /clear the coordinates/,
+    );
+    assert.throws(
+      () => db.exec("DELETE FROM guest_accommodation"),
+      /clear the coordinates/,
+    );
+    assert.deepEqual(
+      db
+        .prepare(
+          "SELECT group_id, guest_id, lat, updated_by FROM accommodation_history ORDER BY history_id",
+        )
+        .all(),
+      [
+        { group_id: 1, guest_id: null, lat: -33.95, updated_by: 1 },
+        { group_id: null, guest_id: 2, lat: -33.99, updated_by: 2 },
+        { group_id: 1, guest_id: null, lat: null, updated_by: 2 },
+      ],
+    );
+    assert.throws(
+      () => db.exec("UPDATE accommodation_history SET lat = 0"),
+      /append-only/,
+    );
+    assert.throws(
+      () => db.exec("DELETE FROM accommodation_history"),
+      /append-only/,
+    );
+  });
+
+  test("accommodation_changes lists places being pinned, moved and cleared, and who did it", () => {
+    ownPlace(null, null);
+    groupPlace(-33.95, 22.46);
+    groupPlace(-33.95, 22.46);
+    ownPlace(-33.99, 22.58);
+    groupPlace(-33.93, 22.67, 2);
+    ownPlace(null, null, 1);
+
+    assert.deepEqual(
+      db
+        .prepare(
+          "SELECT group_id, guest_id, previous_set_by, changed_by, had_place, has_place FROM accommodation_changes",
+        )
+        .all(),
+      [
+        {
+          group_id: 1,
+          guest_id: null,
+          previous_set_by: null,
+          changed_by: "Alice Smith",
+          had_place: 0,
+          has_place: 1,
+        },
+        {
+          group_id: null,
+          guest_id: 2,
+          previous_set_by: "Bob Smith",
+          changed_by: "Bob Smith",
+          had_place: 0,
+          has_place: 1,
+        },
+        {
+          group_id: 1,
+          guest_id: null,
+          previous_set_by: "Alice Smith",
+          changed_by: "Bob Smith",
+          had_place: 1,
+          has_place: 1,
+        },
+        {
+          group_id: null,
+          guest_id: 2,
+          previous_set_by: "Bob Smith",
+          changed_by: "Alice Smith",
+          had_place: 1,
+          has_place: 0,
+        },
+      ],
+    );
   });
 });
