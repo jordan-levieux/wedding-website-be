@@ -1,8 +1,10 @@
+import { Storage } from "@google-cloud/storage";
 import config from "config";
 import { createAdminStore } from "./admin-store.js";
 import { createApp } from "./app.js";
 import { googleAuth } from "./auth.js";
 import { openDatabase } from "./db.js";
+import { createGallery } from "./gallery.js";
 import { createGuestStore } from "./guest-store.js";
 
 const port: number = config.get("server.port");
@@ -21,6 +23,8 @@ const app = createApp({
     ? config.get("server.corsUrls")
     : undefined,
   rsvpDeadline,
+  // signs with Cloud Run's service account, or the local application default credentials
+  gallery: createGallery(new Storage().bucket(config.get("gallery.bucket"))),
 });
 
 const server = app.listen(port, () => {

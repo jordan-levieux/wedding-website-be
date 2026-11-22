@@ -20,6 +20,8 @@ export type Rsvp = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: boolean | null;
+  braai: boolean | null;
+  brunch: boolean | null;
   respondedBy: number;
   respondedAt: string;
 };
@@ -30,6 +32,8 @@ export type RsvpInput = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: boolean | null;
+  braai: boolean | null;
+  brunch: boolean | null;
 };
 
 export type SqliteBoolean = 0 | 1;
@@ -40,6 +44,8 @@ export type RsvpRow = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: SqliteBoolean | null;
+  braai: SqliteBoolean | null;
+  brunch: SqliteBoolean | null;
   respondedBy: number | null;
   respondedAt: string | null;
 };
@@ -49,6 +55,8 @@ export const RSVP_COLUMNS = `
   rsvp.dietary,
   rsvp.dietary_other_details AS dietaryOtherDetails,
   rsvp.shuttle,
+  rsvp.braai,
+  rsvp.brunch,
   rsvp.responded_by AS respondedBy,
   rsvp.responded_at AS respondedAt
 `;
@@ -59,15 +67,17 @@ export type RsvpParams = {
   dietary: DietaryOption | null;
   dietaryOtherDetails: string | null;
   shuttle: SqliteBoolean | null;
+  braai: SqliteBoolean | null;
+  brunch: SqliteBoolean | null;
 };
 
 // for an `INSERT INTO rsvps (...) SELECT <guest_id>, ${RSVP_INSERT_VALUES}, <responded_by>, <responded_at> ...`
 export const RSVP_INSERT_COLUMNS = `
-  guest_id, attending, dietary, dietary_other_details, shuttle, responded_by, responded_at
+  guest_id, attending, dietary, dietary_other_details, shuttle, braai, brunch, responded_by, responded_at
 `;
 
 export const RSVP_INSERT_VALUES = `
-  $attending, $dietary, $dietaryOtherDetails, $shuttle
+  $attending, $dietary, $dietaryOtherDetails, $shuttle, $braai, $brunch
 `;
 
 export const RSVP_UPSERT = `
@@ -76,6 +86,8 @@ export const RSVP_UPSERT = `
     dietary = excluded.dietary,
     dietary_other_details = excluded.dietary_other_details,
     shuttle = excluded.shuttle,
+    braai = excluded.braai,
+    brunch = excluded.brunch,
     responded_by = excluded.responded_by,
     responded_at = excluded.responded_at
   RETURNING guest_id AS guestId
@@ -89,6 +101,9 @@ export const toBoolean = (value: SqliteBoolean | null) =>
 export const toSqliteBoolean = (value: boolean): SqliteBoolean =>
   value ? 1 : 0;
 
+const toNullableSqliteBoolean = (value: boolean | null) =>
+  value === null ? null : toSqliteBoolean(value);
+
 export const toRsvp = (row: RsvpRow): Rsvp | null =>
   row.attending === null
     ? null
@@ -97,6 +112,8 @@ export const toRsvp = (row: RsvpRow): Rsvp | null =>
         dietary: row.dietary,
         dietaryOtherDetails: row.dietaryOtherDetails,
         shuttle: toBoolean(row.shuttle),
+        braai: toBoolean(row.braai),
+        brunch: toBoolean(row.brunch),
         respondedBy: row.respondedBy!,
         respondedAt: row.respondedAt!,
       };
@@ -106,7 +123,9 @@ export const toRsvpParams = (rsvp: RsvpInput): RsvpParams => ({
   attending: toSqliteBoolean(rsvp.attending),
   dietary: rsvp.dietary,
   dietaryOtherDetails: rsvp.dietaryOtherDetails,
-  shuttle: rsvp.shuttle === null ? null : toSqliteBoolean(rsvp.shuttle),
+  shuttle: toNullableSqliteBoolean(rsvp.shuttle),
+  braai: toNullableSqliteBoolean(rsvp.braai),
+  brunch: toNullableSqliteBoolean(rsvp.brunch),
 });
 
 export const toCoordinates = (

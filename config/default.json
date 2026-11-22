@@ -11,5 +11,8 @@
   "server": {
     "port": 3000,
     "corsUrls": ["http://localhost:4200", "https://hj-wedding-day.co.za"]
+  },
+  "gallery": {
+    "bucket": "wedding-website-node-pictures-bucket"
   }
 }

@@ -10,6 +10,7 @@ import { createAdminRouter } from "./admin-routes.js";
 import type { AdminStore } from "./admin-store.js";
 import { getIdentity } from "./auth.js";
 import { errorHandler, ExpectedError } from "./error-handler.js";
+import type { Gallery } from "./gallery.js";
 import type { Group, GuestStore } from "./guest-store.js";
 import {
   parseAccommodation,
@@ -24,8 +25,17 @@ export const createApp = (deps: {
   authenticate: RequestHandler;
   corsUrls: string[] | undefined;
   rsvpDeadline: Date;
+  gallery: Gallery;
 }): Express => {
-  const { db, store, adminStore, authenticate, corsUrls, rsvpDeadline } = deps;
+  const {
+    db,
+    store,
+    adminStore,
+    authenticate,
+    corsUrls,
+    rsvpDeadline,
+    gallery,
+  } = deps;
   const app: Express = express();
   const dbHealthCheck = db.prepare("SELECT 1");
 
@@ -111,6 +121,13 @@ export const createApp = (deps: {
       res.json(groupResponse(store.getGroup(sub)!));
     },
   );
+
+  app.get("/gallery", authenticate, async (_req: Request, res: Response) => {
+    if (!store.getGroup(getIdentity(res).sub)) {
+      throw new ExpectedError("user is not registered", 403);
+    }
+    res.json({ photos: await gallery.listPhotos() });
+  });
 
   app.use("/admin", createAdminRouter({ store, adminStore, authenticate }));
 

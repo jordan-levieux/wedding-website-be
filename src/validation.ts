@@ -46,6 +46,13 @@ const parseCoordinates = (value: unknown, at: string): Coordinates | null => {
   return { lat, lng };
 };
 
+const parseOptionalBoolean = (value: unknown, at: string): boolean | null => {
+  if (value !== null && typeof value !== "boolean") {
+    throw badRequest(`${at} must be true, false or null`);
+  }
+  return value;
+};
+
 const parseRsvp = (value: unknown, index: number): RsvpInput => {
   const at = `rsvps[${index}]`;
   if (!isObject(value)) {
@@ -57,6 +64,8 @@ const parseRsvp = (value: unknown, index: number): RsvpInput => {
     dietary,
     dietaryOtherDetails = null,
     shuttle = null,
+    braai = null,
+    brunch = null,
   } = value;
   if (!isId(guestId)) {
     throw badRequest(`${at}.guestId must be a guest id`);
@@ -71,6 +80,8 @@ const parseRsvp = (value: unknown, index: number): RsvpInput => {
       dietary: null,
       dietaryOtherDetails: null,
       shuttle: null,
+      braai: null,
+      brunch: null,
     };
   }
   if (!DIETARY_OPTIONS.includes(dietary as DietaryOption)) {
@@ -88,16 +99,15 @@ const parseRsvp = (value: unknown, index: number): RsvpInput => {
       `${at}.dietaryOtherDetails is required for dietary "other" (max ${MAX_TEXT_LENGTH} characters)`,
     );
   }
-  if (shuttle !== null && typeof shuttle !== "boolean") {
-    throw badRequest(`${at}.shuttle must be true, false or null`);
-  }
   return {
     guestId,
     attending,
     dietary: dietary as DietaryOption,
     dietaryOtherDetails:
       dietary === "other" ? (dietaryOtherDetails as string).trim() : null,
-    shuttle,
+    shuttle: parseOptionalBoolean(shuttle, `${at}.shuttle`),
+    braai: parseOptionalBoolean(braai, `${at}.braai`),
+    brunch: parseOptionalBoolean(brunch, `${at}.brunch`),
   };
 };
 

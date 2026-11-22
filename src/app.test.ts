@@ -9,6 +9,7 @@ import { createApp } from "./app.js";
 import type { Identity } from "./auth.js";
 import { migrate } from "./db.js";
 import { ExpectedError } from "./error-handler.js";
+import type { GalleryPhoto } from "./gallery.js";
 import { createGuestStore } from "./guest-store.js";
 
 // stands in for Google: the bearer token is the caller's `sub`
@@ -29,6 +30,15 @@ const attending = (guestId: number) => ({
   shuttle: false,
 });
 
+const PHOTOS: GalleryPhoto[] = [
+  {
+    name: "hyla_and_jordan/01_patagonia.jpg",
+    url: "https://storage.googleapis.com/signed",
+    alt: null,
+    caption: "Patagonia",
+  },
+];
+
 const FUTURE = new Date(Date.now() + 24 * 60 * 60 * 1000);
 const PAST = new Date(Date.now() - 1000);
 
@@ -45,6 +55,7 @@ describe("API", () => {
       authenticate: fakeAuth,
       corsUrls: ["http://localhost:4200"],
       rsvpDeadline,
+      gallery: { listPhotos: () => Promise.resolve(PHOTOS) },
     });
     return new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -156,6 +167,19 @@ describe("API", () => {
     });
   });
 
+  describe("GET /gallery", () => {
+    test("gives signed-in guests the signed photo links", async () => {
+      const { status, body } = await call("GET", "/gallery", "dave");
+      assert.equal(status, 200);
+      assert.deepEqual(body, { photos: PHOTOS });
+    });
+
+    test("is only for guests who have signed up", async () => {
+      assert.equal((await call("GET", "/gallery", null)).status, 401);
+      assert.equal((await call("GET", "/gallery", "stranger")).status, 403);
+    });
+  });
+
   describe("PUT /rsvp", () => {
     test("RSVPs for yourself and your group, recorded as answered by you", async () => {
       const { status, body } = await call("PUT", "/rsvp", "bob", {
@@ -166,12 +190,16 @@ describe("API", () => {
             dietary: "other",
             dietaryOtherDetails: "  no mushrooms ",
             shuttle: true,
+            braai: true,
+            brunch: false,
           },
           {
             guestId: 1,
             attending: false,
             dietary: "vegetarian",
             shuttle: true,
+            braai: true,
+            brunch: true,
           },
         ],
       });
@@ -184,6 +212,8 @@ describe("API", () => {
           dietary: "other",
           dietaryOtherDetails: "no mushrooms",
           shuttle: true,
+          braai: true,
+          brunch: false,
           respondedBy: 2,
           respondedAt: undefined,
         },
@@ -196,6 +226,8 @@ describe("API", () => {
           dietary: null,
           dietaryOtherDetails: null,
           shuttle: null,
+          braai: null,
+          brunch: null,
           respondedBy: 2,
           respondedAt: undefined,
         },
@@ -232,6 +264,8 @@ describe("API", () => {
         { rsvps: [{ ...attending(2), dietary: "carnivore" }] },
         { rsvps: [{ ...attending(2), dietary: "other" }] },
         { rsvps: [{ ...attending(2), shuttle: "yes" }] },
+        { rsvps: [{ ...attending(2), braai: 1 }] },
+        { rsvps: [{ ...attending(2), brunch: "no" }] },
         { rsvps: [attending(2), { guestId: 2, attending: false }] },
       ];
       for (const body of invalidBodies) {
@@ -244,12 +278,20 @@ describe("API", () => {
       assert.equal(historyCount("rsvps"), 0);
     });
 
-    test("shuttle is optional when attending", async () => {
+    test("shuttle, braai and brunch are optional when attending", async () => {
       const { status, body } = await call("PUT", "/rsvp", "bob", {
         rsvps: [{ guestId: 2, attending: true, dietary: "none" }],
       });
       assert.equal(status, 200);
-      assert.equal(body.guests[1].rsvp.shuttle, null);
+      const { shuttle, braai, brunch } = body.guests[1].rsvp;
+      assert.deepEqual(
+        { shuttle, braai, brunch },
+        {
+          shuttle: null,
+          braai: null,
+          brunch: null,
+        },
+      );
     });
 
     test("malformed and oversized bodies are client errors, not 500s", async () => {
@@ -414,6 +456,8 @@ describe("API", () => {
             dietary: "none",
             dietaryOtherDetails: null,
             shuttle: false,
+            braai: null,
+            brunch: null,
             respondedBy: 2,
           },
           {
@@ -422,6 +466,8 @@ describe("API", () => {
             dietary: "none",
             dietaryOtherDetails: null,
             shuttle: null,
+            braai: null,
+            brunch: null,
             respondedBy: 1,
           },
         ],

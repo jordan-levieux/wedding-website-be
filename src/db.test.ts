@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, beforeEach, describe, test } from "node:test";
@@ -22,7 +22,7 @@ describe("openDatabase", () => {
     assert.equal(db.pragma("journal_mode", { simple: true }), "delete");
     assert.equal(db.pragma("synchronous", { simple: true }), 2); // FULL
     assert.equal(db.pragma("foreign_keys", { simple: true }), 1);
-    assert.equal(db.pragma("user_version", { simple: true }), 2);
+    assert.equal(db.pragma("user_version", { simple: true }), 3);
     db.close();
   });
 
@@ -30,7 +30,44 @@ describe("openDatabase", () => {
     const filePath = join(tempDir, "current.db");
     openDatabase(filePath).close();
     const db = openDatabase(filePath);
-    assert.equal(db.pragma("user_version", { simple: true }), 2);
+    assert.equal(db.pragma("user_version", { simple: true }), 3);
+    db.close();
+  });
+
+  test("adds the braai and brunch answers without losing existing RSVPs", () => {
+    const filePath = join(tempDir, "before-braai.db");
+    const before = new Database(filePath);
+    ["001_initial_schema.sql", "002_log_first_answers.sql"].forEach((file) =>
+      before.exec(
+        readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
+      ),
+    );
+    before.pragma("user_version = 2");
+    before.exec(`
+      INSERT INTO guests (guest_id, group_id, name, surname) VALUES (1, 1, 'Alice', 'Smith');
+      INSERT INTO rsvps (guest_id, attending, dietary, shuttle, responded_by, responded_at)
+      VALUES (1, 1, 'none', 1, 1, 'then');
+    `);
+    before.close();
+
+    const db = openDatabase(filePath);
+    db.exec("UPDATE rsvps SET braai = 1 WHERE guest_id = 1");
+
+    assert.deepEqual(
+      db
+        .prepare(
+          "SELECT attending, shuttle, braai, brunch FROM rsvp_history ORDER BY history_id",
+        )
+        .all(),
+      [
+        { attending: 1, shuttle: 1, braai: null, brunch: null },
+        { attending: 1, shuttle: 1, braai: 1, brunch: null },
+      ],
+    );
+    assert.deepEqual(
+      db.prepare("SELECT changed_fields FROM rsvp_changes").pluck().all(),
+      ["", "braai"],
+    );
     db.close();
   });
 });
@@ -90,6 +127,10 @@ describe("rsvps", () => {
     );
     insert("(1, 1, 'other', 'no nuts', 0, 1, 'now')");
     insert("(2, 0, NULL, NULL, NULL, 2, 'now')");
+    assert.throws(
+      () => db.exec("UPDATE rsvps SET brunch = 2 WHERE guest_id = 1"),
+      /CHECK constraint failed/,
+    );
   });
 
   test("every insert and update is recorded in rsvp_history, re-submits of the same answer included", () => {
@@ -115,6 +156,7 @@ describe("rsvps", () => {
     answer(2, 0, 1);
     answer(1, 1, 1);
     answer(1, 1, 1, 1);
+    db.exec("UPDATE rsvps SET braai = 1, brunch = 0 WHERE guest_id = 1");
 
     const changes = db
       .prepare(
@@ -151,6 +193,14 @@ describe("rsvps", () => {
         previous_answer_by: "Alice Smith",
         changed_by: "Alice Smith",
         changed_fields: "shuttle",
+        was_attending: 1,
+        now_attending: 1,
+      },
+      {
+        guest: "Alice Smith",
+        previous_answer_by: "Alice Smith",
+        changed_by: "Alice Smith",
+        changed_fields: "braai, brunch",
         was_attending: 1,
         now_attending: 1,
       },

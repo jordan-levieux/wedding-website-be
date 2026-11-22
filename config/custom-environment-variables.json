@@ -14,5 +14,8 @@
       "__name": "CORS_URLS",
       "__format": "json"
     }
+  },
+  "gallery": {
+    "bucket": "GALLERY_BUCKET"
   }
 }

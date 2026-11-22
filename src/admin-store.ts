@@ -246,6 +246,8 @@ export const createAdminStore = (db: Database.Database) => {
         dietary,
         dietary_other_details AS dietaryOtherDetails,
         shuttle,
+        braai,
+        brunch,
         responded_by AS respondedBy,
         recorded_at AS respondedAt
       FROM rsvp_history

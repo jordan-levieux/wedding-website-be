@@ -112,6 +112,8 @@ describe("guest store", () => {
       dietary: "vegetarian",
       dietaryOtherDetails: null,
       shuttle: false,
+      braai: null,
+      brunch: null,
       respondedBy: 1,
       respondedAt: "2026-10-24T10:00:00.000Z",
     });
