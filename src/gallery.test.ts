@@ -46,13 +46,23 @@ describe("gallery", () => {
     });
   });
 
-  test("lists only images, with a signed link and any alt text or caption", async () => {
+  test("lists only images, with a signed link and any alt text, caption and size", async () => {
     const { bucket } = fakeBucket([
       { name: "hyla_and_jordan/", contentType: "text/plain" },
       {
         name: "hyla_and_jordan/01_patagonia.jpg",
         contentType: "image/jpeg",
-        metadata: { caption: " Patagonia ", alt: "" },
+        metadata: {
+          caption: " Patagonia ",
+          alt: "",
+          width: "2560",
+          height: "1707",
+        },
+      },
+      {
+        name: "hyla_and_jordan/02_ferns.jpg",
+        contentType: "image/jpeg",
+        metadata: { width: "wide", height: "-3" },
       },
       { name: "notes.txt", contentType: "text/plain" },
     ]);
@@ -64,6 +74,16 @@ describe("gallery", () => {
         url: `https://signed/hyla_and_jordan/01_patagonia.jpg?from=${Date.UTC(2027, 2, 13, 6)}&to=${Date.UTC(2027, 2, 13, 18)}`,
         alt: null,
         caption: "Patagonia",
+        width: 2560,
+        height: 1707,
+      },
+      {
+        name: "hyla_and_jordan/02_ferns.jpg",
+        url: `https://signed/hyla_and_jordan/02_ferns.jpg?from=${Date.UTC(2027, 2, 13, 6)}&to=${Date.UTC(2027, 2, 13, 18)}`,
+        alt: null,
+        caption: null,
+        width: null,
+        height: null,
       },
     ]);
   });

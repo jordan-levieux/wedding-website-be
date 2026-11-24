@@ -36,6 +36,8 @@ const PHOTOS: GalleryPhoto[] = [
     url: "https://storage.googleapis.com/signed",
     alt: null,
     caption: "Patagonia",
+    width: 2560,
+    height: 1707,
   },
 ];
 

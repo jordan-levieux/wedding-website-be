@@ -7,6 +7,9 @@ export type GalleryPhoto = {
   // from the object's custom metadata, if set
   alt: string | null;
   caption: string | null;
+  // pixel size, set by the FE's prepare-gallery-photos.sh when it uploads; the viewer needs it up front
+  width: number | null;
+  height: number | null;
 };
 
 export type Gallery = {
@@ -25,6 +28,11 @@ export const signingWindow = (now: number) => {
 
 const metadataText = (value: unknown) =>
   typeof value === "string" && value.trim() ? value.trim() : null;
+
+const metadataSize = (value: unknown) => {
+  const size = Number(metadataText(value));
+  return Number.isInteger(size) && size > 0 ? size : null;
+};
 
 // The bucket is private: guests only ever see time-limited signed links to its images.
 export const createGallery = (
@@ -71,6 +79,8 @@ export const createGallery = (
           url: await signedUrl(file.name),
           alt: metadataText(file.metadata.metadata?.["alt"]),
           caption: metadataText(file.metadata.metadata?.["caption"]),
+          width: metadataSize(file.metadata.metadata?.["width"]),
+          height: metadataSize(file.metadata.metadata?.["height"]),
         })),
       );
     },
